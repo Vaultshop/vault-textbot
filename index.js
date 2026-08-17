@@ -1,5 +1,5 @@
 /* ============================================================
-   [VAULT] TEXT BOT v5 — /text + rep su auto lentele (SUTVARKYTA)
+   [VAULT] TEXT BOT v6 — /text + rep su auto lentele (FINAL)
 ============================================================ */
 const http = require('http');
 const fs = require('fs');
@@ -26,7 +26,7 @@ function totalNeg() { return Object.values(repDb.products).reduce((a, p) => a + 
 loadRep();
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages]
 });
 
 function isStaff(i) {
