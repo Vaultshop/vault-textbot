@@ -1,7 +1,9 @@
 /* ============================================================
-   [VAULT] TEXT BOT — /text komanda + mini status svetainė
+   [VAULT] TEXT BOT v4 — /text + rep su auto lentele
 ============================================================ */
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const {
   Client, GatewayIntentBits, EmbedBuilder, ModalBuilder, ActionRowBuilder,
   TextInputBuilder, TextInputStyle, PermissionFlagsBits
@@ -10,12 +12,44 @@ const {
 const LOGO_URL = 'https://raw.githubusercontent.com/Vaultshop/Vaults/main/logo.png';
 const state = { startedAt: null };
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+/* ---------------- Atsiliepimų DB ---------------- */
+const REP_FILE = path.join(__dirname, 'rep.json');
+let repDb = { products: {}, lastStats: {} };
+function loadRep() {
+  try { if (fs.existsSync(REP_FILE)) repDb = JSON.parse(fs.readFileSync(REP_FILE, 'utf8')); } catch (e) {}
+  if (!repDb.products) repDb.products = {};
+  if (!repDb.lastStats) repDb.lastStats = {};
+}
+function saveRep() { fs.writeFileSync(REP_FILE, JSON.stringify(repDb, null, 2)); }
+function totalPos() { return Object.values(repDb.products).reduce((a, p) => a + (p.pos || 0), 0); }
+function totalNeg() { return Object.values(repDb.products).reduce((a, p) => a + (p.neg || 0), 0); }
+loadRep();
+
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildMessageContent]
+});
 
 function isStaff(i) {
   if (i.member.permissions.has(PermissionFlagsBits.Administrator)) return true;
   if (process.env.STAFF_ROLE_ID && i.member.roles.cache.has(process.env.STAFF_ROLE_ID)) return true;
   return false;
+}
+
+/* ---------------- Lentele (embed) ---------------- */
+function statsEmbed(voter, positive, product) {
+  return new EmbedBuilder()
+    .setColor(0xff0000)
+    .setTitle('📊 Discord Atsiliepimai')
+    .setDescription(
+      (positive
+        ? '✅ **Dėkojame už atsiliepimą,** <@' + voter + '>! 🙏'
+        : '📝 **Ačiū už atsiliepimą,** <@' + voter + '>! Apgailestaujame, kad taip nutiko — perduosime administracijai. 🙏') +
+      '\n\n🛍️ **Prekė:** ' + product + ' • ' + (positive ? '🟩 Teigiamas' : '🟥 Neigiamas') +
+      '\n\n🟥 **Teigiami atsiliepimai:** ' + totalPos() +
+      '\n🟧 **Neigiami atsiliepimai:** ' + totalNeg() +
+      '\n🛒 **Prekių su atsiliepimais:** ' + Object.keys(repDb.products).length
+    )
+    .setFooter({ text: 'Vault • Patikima bendruomenė' });
 }
 
 /* ---------------- Mini svetainė ---------------- */
@@ -42,9 +76,9 @@ code{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;padding:2px 8
 <div class="card">
 <img src="https://raw.githubusercontent.com/Vaultshop/Vaults/main/logo.png" alt="Vault">
 <h1><span class="red">Vault</span> | Text Bot</h1>
-<p class="muted">/text komanda — gražūs embed pranešimai su spalvota linija tavo serveryje.</p>
+<p class="muted">/text komanda + atsiliepimų sistema (+rep / -rep) tavo serveryje.</p>
 <div class="status"><span class="dot" id="dot"></span><b id="st">KRAUNAMA...</b></div>
-<p class="muted" style="margin-top:14px">Discord'e rašyk <code>/text</code> → pasirink kanalą ir spalvą → įrašyk tekstą → Submit.</p>
+<p class="muted" style="margin-top:14px">Discord'e: <code>/text</code> • <code>+rep prekė</code> • <code>-rep prekė</code></p>
 </div>
 <script>
 function poll(){
@@ -72,7 +106,7 @@ http.createServer((req, res) => {
   res.end(HTML);
 }).listen(process.env.PORT || 3000, () => console.log('Mini svetainė veikia'));
 
-/* ---------------- Komandų registravimas ---------------- */
+/* ---------------- /text komanda ---------------- */
 client.once('ready', async () => {
   state.startedAt = Date.now();
   console.log('🟢 Text bot online:', client.user.tag);
@@ -86,7 +120,7 @@ client.once('ready', async () => {
           { name: '🔴 Raudona', value: 'red' },
           { name: '🟢 Žalia', value: 'green' },
           { name: '🔵 Mėlyna', value: 'blue' },
-          { name: '💀 Juoda/Balta', value: 'black' }
+          { name: '⚫ Juoda', value: 'black' }
         ] }
     ]
   }];
@@ -95,7 +129,6 @@ client.once('ready', async () => {
 
 const pending = {};
 
-/* ---------------- /text + modal ---------------- */
 client.on('interactionCreate', async (i) => {
   try {
     if (i.isChatInputCommand() && i.commandName === 'text') {
@@ -108,8 +141,7 @@ client.on('interactionCreate', async (i) => {
       modal.addComponents(
         new ActionRowBuilder().addComponents(
           new TextInputBuilder().setCustomId('title').setLabel('Pavadinimas (nebūtina)')
-            .setStyle(TextInputStyle.Short).setRequired(false)
-            .setPlaceholder('Pvz.: 📜 VAULT — Taisyklės')),
+            .setStyle(TextInputStyle.Short).setRequired(false).setPlaceholder('Pvz.: 📜 VAULT — Taisyklės')),
         new ActionRowBuilder().addComponents(
           new TextInputBuilder().setCustomId('body').setLabel('Tekstas')
             .setStyle(TextInputStyle.Paragraph).setRequired(true)
@@ -117,7 +149,6 @@ client.on('interactionCreate', async (i) => {
       );
       return await i.showModal(modal);
     }
-
     if (i.isModalSubmit() && i.customId === 'm:text') {
       const title = (i.fields.getTextInputValue('title') || '').trim();
       const body = i.fields.getTextInputValue('body');
@@ -137,7 +168,37 @@ client.on('interactionCreate', async (i) => {
   }
 });
 
+/* ---------------- +rep / -rep su auto lentele ---------------- */
+client.on('messageCreate', async (msg) => {
+  try {
+    if (msg.author.bot || !msg.guild) return;
+    const content = msg.content.trim();
+    if (!content.startsWith('+rep ') && !content.startsWith('-rep ')) return;
+
+    const positive = content.startsWith('+');
+    const product = content.slice(5).trim();
+    if (!product) return msg.channel.send({ content: '❗ Įrašyk prekės pavadinimą: `+rep Prekė` arba `-rep Prekė`' });
+
+    const key = product.toLowerCase();
+    if (!repDb.products[key]) repDb.products[key] = { name: product, pos: 0, neg: 0 };
+    const p = repDb.products[key];
+    if (positive) p.pos++; else p.neg++;
+
+    /* Ištrinam SENĄ lentelę šiame kanale */
+    const oldId = repDb.lastStats[msg.channel.id];
+    if (oldId) {
+      const old = await msg.channel.messages.fetch(oldId).catch(() => null);
+      if (old) await old.delete().catch(() => {});
+    }
+
+    /* Siunčiam NAUJĄ lentelę */
+    const sent = await msg.channel.send({ embeds: [statsEmbed(msg.author.id, positive, p.name)] });
+    repDb.lastStats[msg.channel.id] = sent.id;
+    saveRep();
+  } catch (e) { console.error('rep klaida:', e); }
+});
+
 /* ---------------- Start ---------------- */
 const token = process.env.TOKEN;
-if (!token) { console.error('❌ Nėra TOKEN env! Render → Environment → TOKEN.'); process.exit(1); }
+if (!token) { console.error('❌ Nėra TOKEN env!'); process.exit(1); }
 client.login(token);
