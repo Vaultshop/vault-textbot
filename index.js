@@ -1,5 +1,5 @@
 /* ============================================================
-   [VAULT] TEXT BOT v6 — /text + rep su auto lentele (FINAL)
+   [VAULT] TEXT BOT v7 — /text + /rep (be intent problemų)
 ============================================================ */
 const http = require('http');
 const fs = require('fs');
@@ -52,6 +52,21 @@ function statsEmbed(voter, positive, product) {
     .setFooter({ text: 'Vault • Patikima bendruomenė' });
 }
 
+async function handleRep(channel, userId, positive, product) {
+  const key = product.toLowerCase();
+  if (!repDb.products[key]) repDb.products[key] = { name: product, pos: 0, neg: 0 };
+  const p = repDb.products[key];
+  if (positive) p.pos++; else p.neg++;
+  const oldId = repDb.lastStats[channel.id];
+  if (oldId) {
+    const old = await channel.messages.fetch(oldId).catch(() => null);
+    if (old) await old.delete().catch(() => {});
+  }
+  const sent = await channel.send({ embeds: [statsEmbed(userId, positive, p.name)] });
+  repDb.lastStats[channel.id] = sent.id;
+  saveRep();
+}
+
 /* ---------------- Mini svetainė ---------------- */
 const HTML = `<!doctype html>
 <html lang="lt">
@@ -76,9 +91,9 @@ code{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;padding:2px 8
 <div class="card">
 <img src="https://raw.githubusercontent.com/Vaultshop/Vaults/main/logo.png" alt="Vault">
 <h1><span class="red">Vault</span> | Text Bot</h1>
-<p class="muted">/text komanda + atsiliepimų sistema (+rep / -rep) tavo serveryje.</p>
+<p class="muted">/text + /rep komandos tavo serveryje.</p>
 <div class="status"><span class="dot" id="dot"></span><b id="st">KRAUNAMA...</b></div>
-<p class="muted" style="margin-top:14px">Discord'e: <code>/text</code> • <code>+rep prekė</code> • <code>-rep prekė</code></p>
+<p class="muted" style="margin-top:14px">Discord'e: <code>/text</code> • <code>/rep</code></p>
 </div>
 <script>
 function poll(){
@@ -106,24 +121,38 @@ http.createServer((req, res) => {
   res.end(HTML);
 }).listen(process.env.PORT || 3000, () => console.log('Mini svetainė veikia'));
 
-/* ---------------- /text komanda ---------------- */
+/* ---------------- Komandos ---------------- */
 client.once('ready', async () => {
   state.startedAt = Date.now();
   console.log('🟢 Text bot online:', client.user.tag);
-  const cmds = [{
-    name: 'text',
-    description: 'Paskelbia tekstą kaip embed su spalvota linija (staff)',
-    options: [
-      { name: 'kanalas', type: 7, channel_types: [0], required: false, description: 'Kanalas, kuriame paskelbti' },
-      { name: 'spalva', type: 3, required: false, description: 'Linijos spalva',
-        choices: [
-          { name: '🔴 Raudona', value: 'red' },
-          { name: '🟢 Žalia', value: 'green' },
-          { name: '🔵 Mėlyna', value: 'blue' },
-          { name: '⚫ Juoda', value: 'black' }
-        ] }
-    ]
-  }];
+  const cmds = [
+    {
+      name: 'text',
+      description: 'Paskelbia tekstą kaip embed su spalvota linija (staff)',
+      options: [
+        { name: 'kanalas', type: 7, channel_types: [0], required: false, description: 'Kanalas, kuriame paskelbti' },
+        { name: 'spalva', type: 3, required: false, description: 'Linijos spalva',
+          choices: [
+            { name: '🔴 Raudona', value: 'red' },
+            { name: '🟢 Žalia', value: 'green' },
+            { name: '🔵 Mėlyna', value: 'blue' },
+            { name: '⚫ Juoda', value: 'black' }
+          ] }
+      ]
+    },
+    {
+      name: 'rep',
+      description: 'Palikti atsiliepimą apie prekę',
+      options: [
+        { name: 'tipas', type: 3, required: true, description: 'Teigiamas ar neigiamas',
+          choices: [
+            { name: '👍 Teigiamas (+rep)', value: 'pos' },
+            { name: '👎 Neigiamas (-rep)', value: 'neg' }
+          ] },
+        { name: 'preke', type: 3, required: true, description: 'Prekės pavadinimas' }
+      ]
+    }
+  ];
   for (const [, g] of client.guilds.cache) g.commands.set(cmds).catch(() => {});
 });
 
@@ -131,6 +160,7 @@ const pending = {};
 
 client.on('interactionCreate', async (i) => {
   try {
+    /* ---------- /text ---------- */
     if (i.isChatInputCommand() && i.commandName === 'text') {
       if (!isStaff(i)) return i.reply({ content: '🚫 Tik staff gali naudoti šią komandą.', ephemeral: true });
       pending[i.user.id] = {
@@ -149,6 +179,17 @@ client.on('interactionCreate', async (i) => {
       );
       return await i.showModal(modal);
     }
+
+    /* ---------- /rep ---------- */
+    if (i.isChatInputCommand() && i.commandName === 'rep') {
+      const positive = i.options.getString('tipas') === 'pos';
+      const product = (i.options.getString('preke') || '').trim();
+      if (!product) return i.reply({ content: '❗ Įrašyk prekės pavadinimą.', ephemeral: true });
+      await handleRep(i.channel, i.user.id, positive, product);
+      return i.reply({ content: '✅ Ačiū už atsiliepimą!', ephemeral: true });
+    }
+
+    /* ---------- /text modal submit ---------- */
     if (i.isModalSubmit() && i.customId === 'm:text') {
       const title = (i.fields.getTextInputValue('title') || '').trim();
       const body = i.fields.getTextInputValue('body');
@@ -166,36 +207,6 @@ client.on('interactionCreate', async (i) => {
     console.error(e);
     if (i.isRepliable() && !i.replied && !i.deferred) i.reply({ content: '❌ ' + String(e.message || e), ephemeral: true }).catch(() => {});
   }
-});
-
-/* ---------------- +rep / -rep su auto lentele ---------------- */
-client.on('messageCreate', async (msg) => {
-  try {
-    if (msg.author.bot || !msg.guild) return;
-    const content = msg.content.trim();
-    if (!content.startsWith('+rep ') && !content.startsWith('-rep ')) return;
-
-    const positive = content.startsWith('+');
-    const product = content.slice(5).trim();
-    if (!product) return msg.channel.send({ content: '❗ Įrašyk prekės pavadinimą: `+rep Prekė` arba `-rep Prekė`' });
-
-    const key = product.toLowerCase();
-    if (!repDb.products[key]) repDb.products[key] = { name: product, pos: 0, neg: 0 };
-    const p = repDb.products[key];
-    if (positive) p.pos++; else p.neg++;
-
-    /* Ištrinam SENĄ lentelę šiame kanale */
-    const oldId = repDb.lastStats[msg.channel.id];
-    if (oldId) {
-      const old = await msg.channel.messages.fetch(oldId).catch(() => null);
-      if (old) await old.delete().catch(() => {});
-    }
-
-    /* Siunčiam NAUJĄ lentelę */
-    const sent = await msg.channel.send({ embeds: [statsEmbed(msg.author.id, positive, p.name)] });
-    repDb.lastStats[msg.channel.id] = sent.id;
-    saveRep();
-  } catch (e) { console.error('rep klaida:', e); }
 });
 
 /* ---------------- Start ---------------- */
