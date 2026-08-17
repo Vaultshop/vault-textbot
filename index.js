@@ -26,7 +26,7 @@ function totalNeg() { return Object.values(repDb.products).reduce((a, p) => a + 
 loadRep();
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildMessageContent]
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
 function isStaff(i) {
