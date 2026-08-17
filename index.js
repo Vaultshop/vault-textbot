@@ -1,5 +1,5 @@
 /* ============================================================
-   [VAULT] TEXT BOT v7 — /text + /rep (be intent problemų)
+   [VAULT] TEXT BOT v8 — /rep istorija LIEKA kanale
 ============================================================ */
 const http = require('http');
 const fs = require('fs');
@@ -14,11 +14,10 @@ const state = { startedAt: null };
 
 /* ---------------- Atsiliepimų DB ---------------- */
 const REP_FILE = path.join(__dirname, 'rep.json');
-let repDb = { products: {}, lastStats: {} };
+let repDb = { products: {} };
 function loadRep() {
   try { if (fs.existsSync(REP_FILE)) repDb = JSON.parse(fs.readFileSync(REP_FILE, 'utf8')); } catch (e) {}
   if (!repDb.products) repDb.products = {};
-  if (!repDb.lastStats) repDb.lastStats = {};
 }
 function saveRep() { fs.writeFileSync(REP_FILE, JSON.stringify(repDb, null, 2)); }
 function totalPos() { return Object.values(repDb.products).reduce((a, p) => a + (p.pos || 0), 0); }
@@ -52,19 +51,14 @@ function statsEmbed(voter, positive, product) {
     .setFooter({ text: 'Vault • Patikima bendruomenė' });
 }
 
+/* Kiekvienas balsas = NAUJAS embed, seni LIEKA */
 async function handleRep(channel, userId, positive, product) {
   const key = product.toLowerCase();
   if (!repDb.products[key]) repDb.products[key] = { name: product, pos: 0, neg: 0 };
   const p = repDb.products[key];
   if (positive) p.pos++; else p.neg++;
-  const oldId = repDb.lastStats[channel.id];
-  if (oldId) {
-    const old = await channel.messages.fetch(oldId).catch(() => null);
-    if (old) await old.delete().catch(() => {});
-  }
-  const sent = await channel.send({ embeds: [statsEmbed(userId, positive, p.name)] });
-  repDb.lastStats[channel.id] = sent.id;
   saveRep();
+  await channel.send({ embeds: [statsEmbed(userId, positive, p.name)] });
 }
 
 /* ---------------- Mini svetainė ---------------- */
